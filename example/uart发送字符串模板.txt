@@ -1,0 +1,60 @@
+
+
+#include <msp430x54x.h>
+#define CPU_F ((double)24000000UL)                              //XT2 --> 24MHZ
+#define Delay_us(x) __delay_cycles((long)(CPU_F*(double)x/1000000.0)) //延时1us
+#define Delay_ms(x) __delay_cycles((long)(CPU_F*(double)x/1000.0))    //延时1ms
+
+#define uchar unsigned char
+#define uint unsigned char
+
+
+void Init_UART();
+void UART_SendString(uchar *String);
+
+uint i,shuzi[];
+uchar message[]="I am happy";
+
+int main(void)
+{
+  WDTCTL = WDTPW + WDTHOLD;                 // Stop WDT
+
+
+  //__no_operation();                         // For debugger
+  
+  Init_UART();                   //初始化串口
+  // for(i=0;i<3;i++)uchar[i]=i*2;
+  
+  i=0;
+  // shuzi={50,51,52};
+  while(1){
+	    Delay_ms(10);
+		UART_SendString(message);
+		
+	  
+	  
+	  
+  }
+}
+
+void Init_UART()
+{
+  P3SEL = BIT4 + BIT5;                      // P3.4,5 = USCI_A0 TXD/RXD
+  UCA0CTL1 |= UCSWRST;                      // **Put state machine in reset**
+  UCA0CTL1 |= UCSSEL_1;                     // CLK = ACLK
+  UCA0BR0 = 0x03;                           // 32kHz/9600=3.41 (see User's Guide)    // 9600Hz bote rate
+  UCA0BR1 = 0x00;                           //
+  UCA0MCTL = UCBRS_3+UCBRF_0;               // Modulation UCBRSx=3, UCBRFx=0
+  UCA0CTL1 &= ~UCSWRST;                     // **Initialize USCI state machine**
+}
+
+void UART_SendString(uchar *String)
+{
+  uchar i;
+  
+  for(i=0; String[i] != '\0'; i++)
+  {
+    while (!(UCA0IFG&UCTXIFG));             // USCI_A0 TX buffer ready?
+    UCA0TXBUF = String[i];                  // TX -> String
+  }
+}
