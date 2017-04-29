@@ -1,0 +1,95 @@
+//函数 HMI_send_number_3 发送1~120 的数据到串口屏幕
+ 
+#include <msp430x54x.h>
+#define CPU_F ((double)24000000UL)                              //XT2 --> 24MHZ
+#define Delay_us(x) __delay_cycles((long)(CPU_F*(double)x/1000000.0)) //延时1us
+#define Delay_ms(x) __delay_cycles((long)(CPU_F*(double)x/1000.0))    //延时1ms
+
+#define uchar unsigned char
+#define uint unsigned char
+
+
+void Init_UART();
+void UART_SendString(uchar *String);
+void UART_SendNumber(uint Number);
+void HMI_send_number_3(long a);
+
+
+
+
+int main(void)
+{
+  WDTCTL = WDTPW + WDTHOLD;                 // Stop WDT
+
+
+  Init_UART();                   //初始化串口
+  
+  
+  while(1){
+
+  
+		for(uint i=20;i<140;i++)
+		
+		HMI_send_number_3(i);
+
+
+	  
+	  
+  }
+}
+
+void Init_UART()
+{
+  P3SEL = BIT4 + BIT5;                      // P3.4,5 = USCI_A0 TXD/RXD
+  UCA0CTL1 |= UCSWRST;                      // **Put state machine in reset**
+  UCA0CTL1 |= UCSSEL_1;                     // CLK = ACLK
+  UCA0BR0 = 0x03;                           // 32kHz/9600=3.41 (see User's Guide)    // 9600Hz bote rate
+  UCA0BR1 = 0x00;                           //
+  UCA0MCTL = UCBRS_3+UCBRF_0;               // Modulation UCBRSx=3, UCBRFx=0
+  UCA0CTL1 &= ~UCSWRST;                     // **Initialize USCI state machine**
+}
+
+void HMI_send_number_3(long a)
+{
+	if(a>=100){
+		uchar total_message[] = {"add 4,0,123"};
+		for(uint i=0;i<2;i++){
+			total_message[10-i]=a-a/10*10+48;
+			a=a/10;}
+			
+		UART_SendString(total_message);
+		UART_SendNumber(0xff);
+		UART_SendNumber(0xff);
+		UART_SendNumber(0xff);
+		}
+	else{
+		uchar total_message[] = {"add 4,0,23"};
+		for(uint i=0;i<2;i++){
+			total_message[9-i]=a-a/10*10+48;
+			a=a/10;}
+		UART_SendString(total_message);
+		UART_SendNumber(0xff);
+		UART_SendNumber(0xff);
+		UART_SendNumber(0xff);
+		}
+
+
+}
+
+void UART_SendString(uchar *String)
+{
+  uint i;
+  
+  for(i=0; String[i] != '\0'; i++)
+  {
+    while (!(UCA0IFG&UCTXIFG));             // USCI_A0 TX buffer ready?
+    UCA0TXBUF = String[i];                  // TX -> String
+  }
+}
+
+void UART_SendNumber(uint Number)
+{
+  
+    while (!(UCA0IFG&UCTXIFG));     
+    UCA0TXBUF = Number;                  // TX -> String
+}
