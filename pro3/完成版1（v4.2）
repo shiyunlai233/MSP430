@@ -1,0 +1,352 @@
+// 版本说明： 暂时放弃PID的D选项
+//
+
+// 接线说明：
+//  msp430       直流电机模块
+//  P4.1    ->     P1.6   |
+//  GND     ->     P1.7   |  电机
+//  +5V     ->     VCC 
+//  GND     ->     GND
+//  3.3V    ->     P1.0   |  开启片子
+//  P2.2    ->     P2.0   |  光电耦合
+
+#include <msp430F5438A.h>  
+
+#define uchar unsigned char
+#define uint  unsigned int
+#define ulong unsigned long int
+
+#define CPU_F ((double)24000000UL)                              //XT2 --> 24MHZ
+#define Delay_us(x) __delay_cycles((long)(CPU_F*(double)x/1000000.0)) //延时1us
+#define Delay_ms(x) __delay_cycles((long)(CPU_F*(double)x/1000.0))    //延时1ms
+
+
+void Set_Vcore(uint level);
+void Init_Clock();
+uint num;
+unsigned int test,test_flag,input_n,input_num;
+long temp_HMI;
+float x_1,x_2,x_3,u_1,u_2,u_3,y_1,y_2,y_3,error_1,error_2,target_v,yd_k,kp,ki,kd,du_k,u_k,y_k,error;
+float zhankong_rate;          //占空比，0.001~1       //占空比，0.001~1
+uint sum,receive_flag,received_data;
+
+
+void UART_SendString(uchar *String);
+void UART_SendNumber(uint Number);
+void send_number6(long a);
+void HMI_send_number_3(long a);
+void HMI_send_number_3_channel_2(long a);
+
+
+void main(void)                             //主函数 
+{ 
+  WDTCTL= WDTPW + WDTHOLD;                 //关闭看门狗 
+  Init_Clock();                             //初始化系统时钟
+  Set_Vcore(PMMCOREV_3);  
+  test=0;
+  test_flag=0;
+  zhankong_rate=0.99;
+  input_n=0;
+  input_num=0;
+  
+    //设置引发PID控制的TimerA0.0
+  P1DIR |= BIT3;                            // P1.0 output
+  TA0CCTL0 = CCIE;                          // CCR0 interrupt enabled
+  TA0CCR0 = 50000;
+  TA0CTL = TASSEL_2 + MC_1 + TACLR;         // SMCLK, upmode, clear TAR
+  TA0CTL |= ID_3;                           // 对SMCK进行8分频，然后作为TACLK使用
+  TA0EX0 |= TAIDEX_2;                       // 对SMCK8分频后再进行3分频，然后作为TACLK使用，总共为24分频得到1Mhz
+  
+//PID初始化
+  u_1=0.0;u_2=0.0;u_3=0.0;   
+  y_1=0;y_2=0;y_3=0;
+  x_1=0;x_2=0;x_3=0;
+  error_1=0;
+  error_2=0;
+  target_v=550;       //请将target_v设置在600以下
+  
+   kp=0;           //设定PID控制系数
+   ki=0.0001;
+   kd=0.00001;
+  
+  //URAT
+  P3SEL = 0x30;                             // P3.4,5 = USCI_A0 TXD/RXD
+  P3DIR = BIT4;
+  UCA0CTL1 |= UCSWRST;                      // **Put state machine in reset**
+  UCA0CTL1 |= UCSSEL_1;                     // CLK = ACLK
+  UCA0BR0 = 0x03;                           // 32kHz/9600=3.41 (see User's Guide)
+  UCA0BR1 = 0x00;                           //
+  UCA0MCTL = UCBRS_3+UCBRF_0;               // Modulation UCBRSx=3, UCBRFx=0
+  UCA0CTL1 &= ~UCSWRST;                     // **Initialize USCI state machine**
+  UCA0IE |= UCRXIE;                         // Enable USCI_A0 RX interrupt
+  
+  receive_flag=0;
+  sum=0;
+
+  //TB0.1 -> P4.1 （电机电源）
+  P4DIR |= BIT1;                           // P2.2 and P2.3 output
+  P4SEL |= BIT1;                            // P2.2 and P2.3 options select
+  TB0CCR0 = 1000;                          // PWM Period
+  TB0CCTL1 = OUTMOD_7;                      // CCR1 reset/set
+  TB0CCR1 = zhankong_rate*TB0CCR0;                            // CCR1 PWM duty cycle
+  TB0CTL = TASSEL_1 + MC_1 + TACLR;         // ACLK,32768Hz up mode, clear TAR
+ 
+  
+  
+//capture mode init   TA1.1 <- P2.2
+            P2DIR &=~BIT2;
+            P2REN |= BIT2;
+            P2SEL |= BIT2;                         //
+	  TA1CCTL1 |= CAP + CM_1 + CCIS_0  + SCS + CCIE;//捕获模式  捕获上升沿  选择CCI2A signal source 同步捕获 开中断
+	  TA1CTL = TASSEL_1 + MC_2 + TACLR + TAIE;  // SMCLK, contmode, clear TAR  enable interrupt
+	  
+	  __bis_SR_register(GIE);       // Enable interrupts
+	  while(1){
+
+
+ 
+	  }
+            
+            
+            
+            
+}
+
+// PID控制
+// Timer A0 interrupt service routine
+#pragma vector=TIMER0_A0_VECTOR
+__interrupt void TIMER0_A0_ISR(void)
+{
+				temp_HMI = 100000/test/5.75;
+				HMI_send_number_3(temp_HMI);        //转速输出到串口屏
+				HMI_send_number_3_channel_2(target_v/5.75);
+				
+  num++;
+	if(num == 4)
+	{
+		P1OUT ^= BIT3;                            // Toggle P1.3
+		num = 0;}  
+    if(test_flag==1&&test>14.5){   //检测test是否是新的测量值
+				test_flag=0;
+				
+				//PID控制
+				yd_k = target_v;
+				
+				du_k = kp*x_1 + kd*x_2 + ki*x_3;
+				u_k=u_1+du_k;                //计算目标系统输入
+
+				//控制目标系统输入的上下限（这才符合实际情况）
+				if(u_k>=0.999)u_k=0.999;
+				if(u_k<=0.3)u_k=0.3;
+				zhankong_rate=u_k;
+				TB0CCR1 = zhankong_rate*1000; 
+				
+				y_k=100000/test;  //查询目标系统输出
+   
+				error=yd_k-y_k;               //计算下一时刻的目标系统结果误差
+				u_3=u_2;u_2=u_1;u_1=u_k;       
+				y_3=y_2;y_2=y_1;y_1=y_k;
+   
+				x_1=error-error_1;             //Calculating P :x(1)
+				x_2=error-2*error_1+error_2;   //Calculating D :x(2)
+				x_3=error;                     //Calculating I :x(3)
+    
+				error_2=error_1;
+				error_1=error;
+            }
+}
+
+// uart接受中断函数
+#pragma vector=USCI_A0_VECTOR
+__interrupt void USCI_A0_ISR(void)
+{
+  switch(__even_in_range(UCA0IV,4))
+  {
+  case 0:break;                             // Vector 0 - no interrupt
+  case 2:                                   // Vector 2 - RXIFG
+    while (!(UCA0IFG&UCTXIFG));             // USCI_A0 TX buffer ready?
+	
+	if(UCA0RXBUF==112)receive_flag=1;   //寻找字符开始符
+	if(UCA0RXBUF!=255&&UCA0RXBUF!=112&&receive_flag==1)sum = sum*10 + (UCA0RXBUF)-48;
+	if(UCA0RXBUF==255&&receive_flag==1){
+		receive_flag=0;
+		received_data=sum;//  在这里取出sum，这就是最终的数据
+		target_v=sum*5.75; //更改目标速度
+		sum=0;}
+			
+    break;
+  case 4:break;                             // Vector 4 - TXIFG
+  default: break;  
+  }
+}
+
+// Timer_A1 Interrupt Vector (TAIV) handler
+#pragma vector=TIMER1_A1_VECTOR
+__interrupt void TIMER1_A1_ISR(void)
+{
+  switch(__even_in_range(TA1IV,14))
+  {
+    case  0: break;                          // No interrupt
+  case  2:
+    { 
+    
+    test =TA1CCR1;
+    TA1CTL |= TACLR; //清定时器
+    test_flag=1;
+    
+    } break;
+    case  4: break;                          // CCR2 not used
+    case  6: break;                          // reserved
+    case  8: break;                          // reserved
+    case 10: break;                          // reserved
+    case 12: break;                          // reserved
+    case 14: break;
+    default: break;
+  }
+}
+
+void HMI_send_number_3(long a)
+{
+	if(a>=100&&a<300){
+		uchar total_message[] = {"add 1,0,123"};
+		for(uint i=0;i<2;i++){
+			total_message[10-i]=a-a/10*10+48;
+			a=a/10;}
+			
+		UART_SendString(total_message);
+		UART_SendNumber(0xff);
+		UART_SendNumber(0xff);
+		UART_SendNumber(0xff);
+		}
+	else if(a<100&&a>0){
+		uchar total_message[] = {"add 1,0,23"};
+		for(uint i=0;i<2;i++){
+			total_message[9-i]=a-a/10*10+48;
+			a=a/10;}
+		UART_SendString(total_message);
+		UART_SendNumber(0xff);
+		UART_SendNumber(0xff);
+		UART_SendNumber(0xff);
+		}
+
+
+}
+
+void HMI_send_number_3_channel_2(long a)
+{
+	if(a>=100&&a<300){
+		uchar total_message[] = {"add 1,1,123"};
+		for(uint i=0;i<2;i++){
+			total_message[10-i]=a-a/10*10+48;
+			a=a/10;}
+			
+		UART_SendString(total_message);
+		UART_SendNumber(0xff);
+		UART_SendNumber(0xff);
+		UART_SendNumber(0xff);
+		}
+	else if(a<100&&a>0){
+		uchar total_message[] = {"add 1,1,23"};
+		for(uint i=0;i<2;i++){
+			total_message[9-i]=a-a/10*10+48;
+			a=a/10;}
+		UART_SendString(total_message);
+		UART_SendNumber(0xff);
+		UART_SendNumber(0xff);
+		UART_SendNumber(0xff);
+		}
+
+
+}
+
+void send_number6(long a)
+{
+	uchar message[]={0,0,0,0,0,0,'\n','\0'};
+	for(uint i=0;i<6;i++){
+		message[5-i]=a-a/10*10+48;
+		a=a/10;
+	}
+	UART_SendString(message);
+}
+
+
+
+void UART_SendNumber(uint Number)
+{
+  
+    while (!(UCA0IFG&UCTXIFG));     
+    UCA0TXBUF = Number;                  // TX -> String
+}
+
+void UART_SendString(uchar *String)
+{
+  uchar i;
+  
+  for(i=0; String[i] != '\0'; i++)
+  {
+    while (!(UCA0IFG&UCTXIFG));             // USCI_A0 TX buffer ready?
+    UCA0TXBUF = String[i];                  // TX -> String
+  }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+/******************************************************************************
+功能：初始化时钟
+详细：使用外部晶振24M作为：MCLK、SMLK
+      使用外部晶振32768HZ作为：ACLK
+******************************************************************************/
+void Init_Clock()
+{
+  uchar i;
+  
+  P5SEL |= BIT2 + BIT3;                   //P5.2和P5.3选择为晶振XT2输入  
+  P7SEL |= BIT0 + BIT1;                   //P7.0和P7.1选择为晶振XT1输入  
+  Set_Vcore(PMMCOREV_3);                  // Set frequency up to 25MHz
+  UCSCTL6 &= ~(XT1OFF + XT2OFF);          // Set XT1 & XT2 On 
+  UCSCTL6 |= XCAP_3;                      // Internal load XT1 cap 12pF，MSP430F5438A V4.0最小系统XT1未接外部晶振  
+  do                                      // Loop until XT1,XT2 & DCO stabilizes
+  {
+    UCSCTL7 &= ~(XT2OFFG + XT1LFOFFG + XT1HFOFFG + DCOFFG);
+    SFRIFG1 &= ~OFIFG;                    // 清除振荡器失效标志
+    for (i = 0xFF; i > 0; i--);           // 延时，等待XT2起振
+  } while (SFRIFG1 & OFIFG);              // 判断XT2是否起振
+  Delay_ms(50);
+  UCSCTL4 |= SELA__XT1CLK + SELS__XT2CLK + SELM__XT2CLK;    //选择MCLK、SMCLK为XT2,  
+}
+
+
+/******************************************************************************
+功能：设置内核电压
+详细：Power Management Module (PMM).The PMM manages all functions related to the power supply and its supervision for the device. Its primary
+functions are first to generate a supply voltage for the core logic, and second, provide several
+mechanisms for the supervision and monitoring of both the voltage applied to the device (DVCC) and thevoltage generated for the core (VCORE).
+The PMM uses an integrated low-dropout voltage regulator (LDO) to produce a secondary core voltage(VCORE) from the primary one applied to the device (DVCC).
+In general, VCOREsupplies the CPU, memories(flash and RAM), and the digital modules, while DVCCsupplies the I/Os and all analog modules (includingthe 
+oscillators). The VCOREoutput is maintained using a dedicated voltage reference. VCORE is programmable up to four steps, 
+to provide only as much power as is needed for the speed that has been selected for the CPU. 
+This enhances power efficiency of the system. The input or primary side of the regulator is referred to in this chapter as its high side. 
+The output or secondary side is referred to in this chapter as its low side.
+******************************************************************************/
+void Set_Vcore(uint level)
+{  
+  PMMCTL0_H = PMMPW_H;                    // Open PMM registers for write  
+  SVSMHCTL = SVSHE + SVSHRVL0 * level + SVMHE + SVSMHRRL0 * level;  // Set SVS/SVM high side new level  
+  SVSMLCTL = SVSLE + SVMLE + SVSMLRRL0 * level;   // Set SVM low side to new level  
+  while ((PMMIFG & SVSMLDLYIFG) == 0);    // Wait till SVM is settled  
+  PMMIFG &= ~(SVMLVLRIFG + SVMLIFG);      // Clear already set flags  
+  PMMCTL0_L = PMMCOREV0 * level;          // Set VCore to new level  
+  if ((PMMIFG & SVMLIFG))                 // Wait till new level reached
+  while ((PMMIFG & SVMLVLRIFG) == 0);
+  SVSMLCTL = SVSLE + SVSLRVL0 * level + SVMLE + SVSMLRRL0 * level;  // Set SVS/SVM low side to new level  
+  PMMCTL0_H = 0x00;                       // Lock PMM registers for write access
+}
